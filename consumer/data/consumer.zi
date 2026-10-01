@@ -1,0 +1,11 @@
+# Zone source for the tzdata consumer program.
+#
+# Authored for this fork.  Daylight saving time runs in 2030 from 02:00 local
+# standard time on the Sunday on or after 8 March until 02:00 local daylight
+# time on the Sunday on or after 1 November.
+
+Rule	CN	2030	2030	-	Mar	Sun>=8	2:00	1:00	-
+Rule	CN	2030	2030	-	Nov	Sun>=1	2:00	0	-
+
+Zone	Etc/Consumer	-5:00	CN	Cst/Cdt
+Zone	Etc/ConsumerUTC	0	-	UTC

@@ -1,0 +1,96 @@
+.{
+    // Package manifest for the tzdata fork.
+    //
+    // `.paths` is the packaging contract: it is what a `zig fetch` tarball
+    // contains and what a path dependency is hashed over.  Every file
+    // `tools/provenance_check.zig` reads is listed here, so a package built
+    // from this list can still run `zig build provenance`; the gate itself
+    // checks that invariant.  See FORK-NOTES.md section 20.
+    .name = .tzdata,
+    .version = "0.1.0",
+    .minimum_zig_version = "0.16.0",
+    .dependencies = .{},
+    .paths = .{
+        "build.zig",
+        "build.zig.zon",
+        // Fork additions: build glue, aggregate header, facade, tests,
+        // separate consumer package, provenance tool and CI.
+        "include",
+        "src",
+        "test",
+        "consumer",
+        "tools",
+        "PROVENANCE.sha256",
+        ".github",
+        ".gitignore",
+        // Fork documentation, named one by one: a wildcard would add a
+        // future file to the package without anyone recording it.
+        "README.zig.md",
+        "UPSTREAM.md",
+        "NOTICE.md",
+        "CHANGELOG.md",
+        "FORK-NOTES.md",
+        // Upstream top-level files, preserved byte for byte.  All 53 files
+        // recorded in PROVENANCE.sha256 appear below.
+        "CONTRIBUTING",
+        "LICENSE",
+        "Makefile",
+        "NEWS",
+        "README",
+        "SECURITY",
+        // Zone source data: the Makefile's $(TDATA) and the files upstream's
+        // other data targets consume.
+        "africa",
+        "antarctica",
+        "asia",
+        "australasia",
+        "backward",
+        "backzone",
+        "calendars",
+        "etcetera",
+        "europe",
+        "factory",
+        "northamerica",
+        "southamerica",
+        // C sources, the headers they include, and the upstream tools this
+        // import carries so the tree stays upstream's.
+        "asctime.c",
+        "date.c",
+        "difftime.c",
+        "localtime.c",
+        "strftime.c",
+        "zdump.c",
+        "zic.c",
+        "private.h",
+        "tzfile.h",
+        // Build and check scripts.
+        "checklinks.awk",
+        "checknow.awk",
+        "checktab.awk",
+        "leapseconds.awk",
+        "workman.sh",
+        "ziguard.awk",
+        "zishrink.awk",
+        "tzselect.ksh",
+        // Tables, leap-second input and manual pages.
+        "iso3166.tab",
+        "leap-seconds.list",
+        "zone.tab",
+        "zone1970.tab",
+        "zonenow.tab",
+        "date.1",
+        "newctime.3",
+        "newstrftime.3",
+        "newtzset.3",
+        "time2posix.3",
+        "tzfile.5",
+        "tzselect.8",
+        "zdump.8",
+        "zic.8",
+        "theory.html",
+        "tz-art.html",
+        "tz-how-to.html",
+        "tz-link.html",
+    },
+    .fingerprint = 0x1ea43a6596770329,
+}

@@ -1,0 +1,16 @@
+# Fixture zone source for the tzdata test-suite.
+#
+# Authored for this fork; it is not copied from an upstream tzdata file.  It
+# uses its own rule set and abbreviations so that the expected transition
+# instants can be derived from this file alone.  See NOTICE.md and
+# FORK-NOTES.md for provenance.
+
+# Daylight saving time runs from 02:00 local standard time on the Sunday on
+# or after 8 March until 02:00 local daylight time on the Sunday on or after
+# 1 November, in 2005 and 2006 only.
+Rule	FX	2005	2006	-	Mar	Sun>=8	2:00	1:00	-
+Rule	FX	2005	2006	-	Nov	Sun>=1	2:00	0	-
+
+Zone	Etc/Fixture	-5:00	FX	Fxs/Fxd
+Zone	Etc/FixtureUTC	0	-	UTC
+Link	Etc/FixtureUTC	Etc/FixtureAlias

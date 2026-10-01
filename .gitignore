@@ -41,3 +41,23 @@ version
 version.h
 zdump
 zic
+
+# Fork additions: the Zig package, its tests, fixtures, tools and CI.  The
+# upstream rules above deliberately ignore every subdirectory and every
+# dotfile, which would hide these paths from Git and from Zig's package
+# hashing, so they are re-included explicitly.
+!*/
+!.github/
+!src/
+!include/
+!test/
+!test/data/
+!consumer/
+!consumer/data/
+!tools/
+!test/data/*.zi
+!consumer/data/*.zi
+
+# Build outputs of this fork (re-ignored after the negations above).
+.zig-cache/
+zig-out/

@@ -1,0 +1,15 @@
+.{
+    .name = .tzdata_consumer,
+    .version = "0.0.1",
+    .minimum_zig_version = "0.16.0",
+    .dependencies = .{
+        .tzdata = .{ .path = ".." },
+    },
+    .paths = .{
+        "build.zig",
+        "build.zig.zon",
+        "src",
+        "data",
+    },
+    .fingerprint = 0xd65a6d8f72b4245c,
+}
