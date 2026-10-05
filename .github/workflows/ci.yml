@@ -33,6 +33,27 @@ jobs:
       - name: Smoke program
         run: zig build smoke -Doptimize=${{ matrix.optimize }} $ZIG_FLAGS
 
+  shared:
+    name: shared library (${{ matrix.optimize }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        optimize: [Debug, ReleaseSafe]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: mlugg/setup-zig@v2
+        with:
+          version: 0.16.0
+      # The same graph as the native job with the shared object selected, so
+      # the exported tz_* surface and the database beside it are what runs.
+      - name: Build shared library, zic and the database
+        run: zig build -Dlinkage=dynamic -Doptimize=${{ matrix.optimize }} $ZIG_FLAGS
+      - name: Unit tests against the shared library
+        run: zig build test -Dlinkage=dynamic -Doptimize=${{ matrix.optimize }} $ZIG_FLAGS
+      - name: Smoke program against the shared library
+        run: zig build smoke -Dlinkage=dynamic -Doptimize=${{ matrix.optimize }} $ZIG_FLAGS
+
   check:
     name: cross-target compile matrix
     runs-on: ubuntu-latest

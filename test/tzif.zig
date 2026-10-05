@@ -25,6 +25,7 @@ fn compileFixture(tmp: *std.testing.TmpDir) !void {
 }
 
 test "zic writes a TZif file whose transitions match the fixture rules" {
+    try support.requireProvider();
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
     try compileFixture(&tmp);
@@ -53,6 +54,7 @@ test "zic writes a TZif file whose transitions match the fixture rules" {
 }
 
 test "the library converts instants around the fixture's daylight saving changes" {
+    try support.requireProvider();
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
     try compileFixture(&tmp);
@@ -101,6 +103,7 @@ test "the library converts instants around the fixture's daylight saving changes
 }
 
 test "zic creates the link declared by the fixture source" {
+    try support.requireProvider();
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
     try compileFixture(&tmp);
@@ -122,6 +125,7 @@ test "zic creates the link declared by the fixture source" {
 }
 
 test "a UTC zone compiled from the fixture reports no daylight saving time" {
+    try support.requireProvider();
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
     try compileFixture(&tmp);

@@ -50,6 +50,7 @@ zic
 !.github/
 !src/
 !include/
+!runtime/
 !test/
 !test/data/
 !consumer/
@@ -57,6 +58,18 @@ zic
 !tools/
 !test/data/*.zi
 !consumer/data/*.zi
+!.envrc
+
+# Nix and direnv state this fork adds.  Upstream's `.*` rule already hides the
+# dotted ones, so naming them here records the intent rather than extending the
+# rule; `result` and `result-*` are the `nix build` symlinks and nothing else
+# matches them.
+.devenv/
+.devenv.flake.nix
+.direnv/
+.envrc.lock
+result
+result-*
 
 # Build outputs of this fork (re-ignored after the negations above).
 .zig-cache/

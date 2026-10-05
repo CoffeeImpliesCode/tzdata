@@ -3,13 +3,33 @@
 //! Every line printed here depends only on fixed timestamps and on the
 //! database this package's own zic compiled, so the output is reproducible.
 //! Zones are opened by plain name, through the TZDIR compiled into the
-//! library, so the run also exercises the lookup a dependent package gets
-//! from `dep.module("tzdata")` alone.  A build that overrides TZDIR with
-//! `-Dtz-dir` needs a populated directory for those names to resolve.
+//! library, so the run also exercises the lookup a dependent package gets from
+//! `dep.module("tzdata")` alone.  A build that overrides TZDIR with `-Dtz-dir`
+//! needs a populated directory for those names to resolve.
+//!
+//! ## Naming a provider, in a runtime-loaded build
+//!
+//! This program is also the runtime-loaded configuration's smoke, and there it
+//! has to say which library to reach for, because nothing is linked and there
+//! is no fallback: `--provider <path>` as the first argument, or the
+//! `TZDATA_PROVIDER` environment variable.  It never silently uses the
+//! bundled linkage - if this build is runtime-loaded and neither names one,
+//! it stops with a message rather than passing.
+//!
+//! The provider has to be a libtz from this package's own build graph.  Under
+//! the default `-Dlinkage=static` this package installs an archive and no
+//! loadable artefact, so one is built separately - or built here first with
+//! `-Dlinkage=dynamic`.  The data that library resolves plain zone names
+//! against is the TZif tree *it* was compiled with, at *its* install prefix's
+//! `share/zoneinfo` and not this invocation's; both have to be present at run
+//! time.
 
 const std = @import("std");
 const Io = std.Io;
 const tzdata = @import("tzdata");
+
+/// Environment variable naming the provider when `--provider` is not given.
+const provider_variable = "TZDATA_PROVIDER";
 
 const Probe = struct {
     zone: [:0]const u8,
@@ -79,10 +99,24 @@ pub fn main(init: std.process.Init) !void {
     const io = init.io;
     const arena = init.arena.allocator();
 
+    if (comptime tzdata.runtime_loaded) {
+        try loadProvider(init, arena);
+    }
+
     var stdout_buffer: [4096]u8 = undefined;
     var stdout_writer = Io.File.stdout().writer(io, &stdout_buffer);
     const stdout = &stdout_writer.interface;
     defer stdout.flush() catch {};
+
+    if (comptime tzdata.runtime_loaded) {
+        // The loader retains its own copy for the life of the process, so this
+        // is a stable pointer into that copy rather than into `arena`.
+        const loaded = tzdata.loadedSource().?;
+        try stdout.print("provider {s} loaded\n", .{switch (loaded) {
+            .path => |path| path,
+            .system => |name| name,
+        }});
+    }
 
     try stdout.print("tzdata version={s} package={s}\n", .{
         tzdata.version(),
@@ -93,10 +127,10 @@ pub fn main(init: std.process.Init) !void {
         var zone = try tzdata.Zone.open(probe.zone);
         defer zone.close();
 
-        const local = try zone.toLocal(probe.timestamp);
+        const converted = try zone.toLocal(probe.timestamp);
         const offset = try zone.utcOffset(probe.timestamp);
-        const rendered = try local.iso8601(arena, offset);
-        const abbreviation = if (local.zone) |borrowed| try arena.dupeZ(u8, borrowed) else "?";
+        const rendered = try converted.iso8601(arena, offset);
+        const abbreviation = if (converted.zone) |borrowed| try arena.dupeZ(u8, borrowed) else "?";
 
         if (!std.mem.eql(u8, rendered, probe.local)) {
             try stdout.print("expected local time {s}, found {s}\n", .{ probe.local, rendered });
@@ -114,7 +148,7 @@ pub fn main(init: std.process.Init) !void {
         }
 
         // mktime_z must turn the broken-down time back into the same instant.
-        const round_trip = try zone.toUtc(local);
+        const round_trip = try zone.toUtc(converted);
         if (round_trip != probe.timestamp) {
             try stdout.print("round trip of {d} produced {d}\n", .{ probe.timestamp, round_trip });
             return error.SmokeMismatch;
@@ -129,6 +163,7 @@ pub fn main(init: std.process.Init) !void {
             if (!std.mem.eql(u8, formatted, "1970-01-01T00:00:00")) return error.SmokeMismatch;
 
             // POSIX/right conversion: with no leap-second data in the file
+
             // both scales agree, in both directions.
             const right = zone.toPosix(probe.timestamp);
             const back = zone.fromPosix(probe.timestamp);
@@ -142,4 +177,33 @@ pub fn main(init: std.process.Init) !void {
             try stdout.print("roundtrip {s} t=0 -> {d}\n", .{ probe.zone, round_trip });
         }
     }
+}
+
+/// Name the provider and load it, or say exactly what is missing.
+///
+/// `--provider <path>` wins over `TZDATA_PROVIDER`; neither is a search path,
+/// and there is no fallback from one to the other.  The environment value is
+/// copied into `arena` because the loader retains its own copy anyway and the
+/// caller's buffer is not required to outlive the call.
+fn loadProvider(init: std.process.Init, arena: std.mem.Allocator) !void {
+    const args = try init.minimal.args.toSlice(arena);
+    if (args.len >= 3 and std.mem.eql(u8, args[1], "--provider")) {
+        try tzdata.load(.{ .path = args[2] });
+        return;
+    }
+    const named = std.process.Environ.getAlloc(init.minimal.environ, arena, provider_variable) catch |err| switch (err) {
+        error.EnvironmentVariableMissing => {
+            std.debug.print(
+                "tzdata smoke: this build resolves tzcode at run time, so it " ++
+                    "needs to be told which library to open. Pass --provider " ++
+                    "<path>, or set {s} to a libtz from this package's own " ++
+                    "build graph (build one with -Dlinkage=dynamic), beside " ++
+                    "the TZif tree its TZDIR names.\n",
+                .{provider_variable},
+            );
+            return error.MissingProvider;
+        },
+        else => return err,
+    };
+    try tzdata.load(.{ .path = named });
 }

@@ -10,10 +10,37 @@
 //! translated C declarations directly, with its own reentrant handle, so the
 //! aggregate header and the `tz_` namespace are exercised too.  Any mismatch
 //! exits non-zero.
+//!
+//! ## Naming a provider, in a runtime-loaded build
+//!
+//! When the dependency was configured to resolve its native symbols at run
+//! time, nothing is linked into this program and there is no fallback: this
+//! one has to say which library to open, with `--provider <path>` anywhere on
+//! the command line or through the `TZDATA_PROVIDER` environment variable.
+//! It never silently uses the bundled linkage - if the dependency is
+//! runtime-loaded and neither names one, this exits non-zero rather than
+//! passing.  Passing `--provider` to a *linked* dependency is refused rather
+//! than ignored, because there would be nothing for it to do.
+//!
+//! ## The provider's data
+//!
+//! A plain zone name is resolved by the library below the `TZDIR` that was
+//! compiled into *it*, which is `<that provider's install prefix>/share/zoneinfo`
+//! when it came from this package's own graph.  That tree has to be present at
+//! run time and it is not this program's to choose.  The dependency installs
+//! exactly what its `-Dlinkage` asked for and nothing else, so under the
+//! default static linkage it produces no loadable artefact and the provider is
+//! supplied separately; build one first with `-Dlinkage=dynamic` if this
+//! program has to name a path.  A zone opened by absolute path, and a POSIX TZ
+//! specification, need no database at all, which is why the raw conversions
+//! below work even when no tree is reachable.
 
 const std = @import("std");
 const Io = std.Io;
 const tzdata = @import("tzdata");
+
+/// Environment variable naming the provider when `--provider` is not given.
+const provider_variable = "TZDATA_PROVIDER";
 
 const Case = struct {
     timestamp: i64,
@@ -118,10 +145,22 @@ pub fn main(init: std.process.Init) !void {
     if (args.len < 2) return error.MissingZoneinfoDirectory;
     const zoneinfo = args[1];
 
+    try loadProvider(init, arena, args);
+
     var stdout_buffer: [4096]u8 = undefined;
     var stdout_writer = Io.File.stdout().writer(init.io, &stdout_buffer);
     const stdout = &stdout_writer.interface;
     defer stdout.flush() catch {};
+
+    if (comptime tzdata.runtime_loaded) {
+        // The loader retains its own copy for the life of the process, so this
+        // is a stable pointer into that copy rather than into `arena`.
+        const loaded = tzdata.loadedSource().?;
+        try stdout.print("provider {s}\n", .{switch (loaded) {
+            .path => |path| path,
+            .system => |name| name,
+        }});
+    }
 
     const zone_path = try std.fmt.allocPrintSentinel(arena, "{s}/Etc/Consumer", .{zoneinfo}, 0);
     var zone = try tzdata.Zone.open(zone_path);
@@ -130,10 +169,10 @@ pub fn main(init: std.process.Init) !void {
     try stdout.print("tzdata {s}\n", .{tzdata.version()});
 
     for (cases) |case| {
-        const local = try zone.toLocal(case.timestamp);
+        const converted = try zone.toLocal(case.timestamp);
         const offset = try zone.utcOffset(case.timestamp);
-        const rendered = try local.iso8601(arena, offset);
-        const abbreviation = (try local.zoneNameOwned(arena)).?;
+        const rendered = try converted.iso8601(arena, offset);
+        const abbreviation = (try converted.zoneNameOwned(arena)).?;
 
         try stdout.print(
             "Etc/Consumer t={d} -> {s} {s} offset={d}\n",
@@ -143,18 +182,18 @@ pub fn main(init: std.process.Init) !void {
         if (!std.mem.eql(u8, rendered, case.local)) return error.UnexpectedLocalTime;
         if (!std.mem.eql(u8, abbreviation, case.abbreviation)) return error.UnexpectedAbbreviation;
         if (offset != case.offset) return error.UnexpectedOffset;
-        if (try zone.toUtc(local) != case.timestamp) return error.UnexpectedRoundTrip;
+        if (try zone.toUtc(converted) != case.timestamp) return error.UnexpectedRoundTrip;
     }
 
     // The same zone reached through a UTC database entry, and strftime.
     const utc_path = try std.fmt.allocPrintSentinel(arena, "{s}/Etc/ConsumerUTC", .{zoneinfo}, 0);
     var utc_zone = try tzdata.Zone.open(utc_path);
     defer utc_zone.close();
-    const utc_local = try utc_zone.toLocal(1919916000);
-    const utc_rendered = try utc_local.iso8601(arena, try utc_zone.utcOffset(1919916000));
+    const utc_converted = try utc_zone.toLocal(1919916000);
+    const utc_rendered = try utc_converted.iso8601(arena, try utc_zone.utcOffset(1919916000));
     try stdout.print("Etc/ConsumerUTC t=1919916000 -> {s} ({s})\n", .{
         utc_rendered,
-        try tzdata.formatAlloc(arena, utc_local, "%Y-%m-%dT%H:%M:%S"),
+        try tzdata.formatAlloc(arena, utc_converted, "%Y-%m-%dT%H:%M:%S"),
     });
     if (!std.mem.eql(u8, utc_rendered, "2030-11-03T06:00:00+00:00")) return error.UnexpectedUtc;
 
@@ -164,10 +203,10 @@ pub fn main(init: std.process.Init) !void {
         var bundled_zone = try tzdata.Zone.open(bundled.zone);
         defer bundled_zone.close();
 
-        const local = try bundled_zone.toLocal(bundled.case.timestamp);
+        const converted = try bundled_zone.toLocal(bundled.case.timestamp);
         const offset = try bundled_zone.utcOffset(bundled.case.timestamp);
-        const rendered = try local.iso8601(arena, offset);
-        const abbreviation = (try local.zoneNameOwned(arena)).?;
+        const rendered = try converted.iso8601(arena, offset);
+        const abbreviation = (try converted.zoneNameOwned(arena)).?;
 
         try stdout.print(
             "{s} t={d} -> {s} {s} offset={d}\n",
@@ -179,7 +218,7 @@ pub fn main(init: std.process.Init) !void {
             return error.UnexpectedAbbreviation;
         }
         if (offset != bundled.case.offset) return error.UnexpectedOffset;
-        if (try bundled_zone.toUtc(local) != bundled.case.timestamp) {
+        if (try bundled_zone.toUtc(converted) != bundled.case.timestamp) {
             return error.UnexpectedRoundTrip;
         }
     }
@@ -194,7 +233,10 @@ pub fn main(init: std.process.Init) !void {
 /// exactly as a C caller would, and release the handle exactly once.
 ///
 /// Europe/Berlin is one hour east of UTC in January, so the epoch is
-/// 1970-01-01 01:00:00 local time.
+/// 1970-01-01 01:00:00 local time.  The zone is named, not opened by path, so
+/// this conversion does depend on the provider's TZif tree - which is the
+/// point: it is the one conversion here that exercises the provider's data
+/// resource rather than a compiled-in rule.
 fn rawHandleConversion(stdout: *std.Io.Writer) !void {
     const handle = tzdata.c.tz_tzalloc("Europe/Berlin");
     if (tzdata.pointerIsNull(handle)) return error.InvalidZone;
@@ -222,4 +264,68 @@ fn rawHandleConversion(stdout: *std.Io.Writer) !void {
     if (comptime @hasField(tzdata.c.struct_tm, "tm_gmtoff")) {
         if (raw.tm_gmtoff != 3600) return error.UnexpectedRawOffset;
     }
+
+    // The three exported objects are read through the provider's own storage,
+    // never through a value captured at load time.  A reentrant handle never
+    // publishes into them (`localtime.c:2891`), so they still hold whatever the
+    // ambient zone last wrote and this consumer has no reason to expect any
+    // particular value - it only proves they are readable where the build
+    // emits them at all.
+    if (comptime tzdata.Ambient.usg_compat_emitted) {
+        try stdout.print(
+            "c.tz_timezone={d} c.tz_daylight={d} c.tz_tzname[0]={s}\n",
+            .{
+                tzdata.Ambient.standardOffsetSeconds().?,
+                @intFromBool(tzdata.Ambient.daylightSavingEverUsed().?),
+                tzdata.Ambient.abbreviation(0) orelse "(unset)",
+            },
+        );
+    }
+}
+
+/// Name the provider and load it, or say exactly what is missing.
+///
+/// `--provider <path>` wins over `TZDATA_PROVIDER`; neither is a search path,
+/// and there is no fallback from one to the other.  The environment value is
+/// copied into `arena` because the loader retains its own copy anyway and the
+/// caller's buffer is not required to outlive the call.
+fn loadProvider(
+    init: std.process.Init,
+    arena: std.mem.Allocator,
+    args: []const [:0]const u8,
+) !void {
+    var named_on_command_line: ?[]const u8 = null;
+    var index: usize = 2;
+    while (index + 1 < args.len) : (index += 1) {
+        if (std.mem.eql(u8, args[index], "--provider")) named_on_command_line = args[index + 1];
+    }
+
+    if (comptime !tzdata.runtime_loaded) {
+        // A linked dependency has the library in its link line; there is
+        // nothing to load and nothing a provider name could change, so saying
+        // so beats quietly ignoring the argument.
+        if (named_on_command_line != null) return error.ProviderNamedForLinkedBuild;
+        return;
+    }
+
+    if (named_on_command_line) |path| {
+        try tzdata.load(.{ .path = path });
+        return;
+    }
+
+    const named = std.process.Environ.getAlloc(init.minimal.environ, arena, provider_variable) catch |err| switch (err) {
+        error.EnvironmentVariableMissing => {
+            std.debug.print(
+                "tzdata consumer: the dependency resolves tzcode at run time, so " ++
+                    "this program must say which library to open. Pass " ++
+                    "--provider <path>, or set {s} to a libtz from that " ++
+                    "dependency's own build graph (build one with " ++
+                    "-Dlinkage=dynamic), beside the TZif tree its TZDIR names.\n",
+                .{provider_variable},
+            );
+            return error.MissingProvider;
+        },
+        else => return err,
+    };
+    try tzdata.load(.{ .path = named });
 }

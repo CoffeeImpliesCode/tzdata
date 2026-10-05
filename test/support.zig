@@ -3,12 +3,64 @@
 //! Fixture databases are produced at test time by this package's own zic, so
 //! the tests exercise the real compiler and the real library together instead
 //! of trusting a checked-in binary blob.
+//!
+//! Every test starts with `requireProvider`, which is a no-op in the ordinary
+//! linked build and the explicit `tzdata.load` in a runtime-loaded one.  That
+//! is what lets the same behavioural tests run against either configuration
+//! without a test having to know which it is in.
+//!
+//! The zone files the named-zone tests open by path are read from
+//! `build_options.zoneinfo_dir`, which the build fills with the *installed*
+//! database directory rather than with a staging or cache path.  A zone
+//! reached that way therefore proves the same lookup a dependent package
+//! makes, and it does not depend on where this build happened to put its
+//! intermediate files.
 
 const std = @import("std");
 const build_options = @import("build_options");
+const tzdata = @import("tzdata");
 
 pub const io = std.testing.io;
 pub const gpa = std.testing.allocator;
+
+/// Environment variable naming the provider a runtime-loaded build must open.
+///
+/// An absolute path, not a SONAME.  This package installs whatever `-Dlinkage`
+/// asked for and nothing else, so under the default static linkage it produces
+/// no loadable artefact at all and the caller names its own provider; under
+/// `-Dlinkage=dynamic` the installed `lib/libtz.so` is one.  Either way it must
+/// be a libtz from this package's own build graph, because that is the one
+/// whose `TZDIR` and header configuration these tests were built against.
+/// Nothing is skipped when it is missing - a runtime-loaded build with no
+/// provider has nothing to test, and passing anyway would mean nothing.
+pub const provider_variable = "TZDATA_PROVIDER";
+
+/// Load the native library this build dispatches to, if it dispatches at all.
+///
+/// In a linked build there is nothing to load and this does nothing, which is
+/// why every test calls it unconditionally rather than branching on
+/// `tzdata.runtime_loaded` itself.  In a runtime-loaded build it performs the
+/// explicit `load` the contract requires, once per process: the loader is
+/// idempotent for the same request, so calling it from several tests is one
+/// load.
+pub fn requireProvider() !void {
+    if (comptime !tzdata.runtime_loaded) return;
+    const path = std.testing.environ.getAlloc(gpa, provider_variable) catch |err| switch (err) {
+        error.EnvironmentVariableMissing => {
+            std.debug.print(
+                "tzdata tests: {s} is not set. A runtime-loaded build reaches " ++
+                    "tzcode through a provider the caller names, so name one: an " ++
+                    "absolute path to a shared libtz built from this package's " ++
+                    "own graph, alongside the TZif tree its TZDIR names.\n",
+                .{provider_variable},
+            );
+            return error.MissingProvider;
+        },
+        else => return err,
+    };
+    defer gpa.free(path);
+    try tzdata.load(.{ .path = path });
+}
 
 /// Absolute path of `name` inside a `std.testing.TmpDir`.
 pub fn tmpPath(

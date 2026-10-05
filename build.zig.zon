@@ -3,9 +3,13 @@
     //
     // `.paths` is the packaging contract: it is what a `zig fetch` tarball
     // contains and what a path dependency is hashed over.  Every file
-    // `tools/provenance_check.zig` reads is listed here, so a package built
-    // from this list can still run `zig build provenance`; the gate itself
-    // checks that invariant.  See FORK-NOTES.md section 20.
+    // `tools/provenance_check.zig` reads is listed here - PROVENANCE.sha256,
+    // README and README.upstream.md - so a package built from this list can
+    // still run `zig build provenance`.  The gate hashes what the manifest
+    // names; it does not itself compare this list against the tree, so an
+    // entry naming a file that is not in the tree fails at `zig fetch` rather
+    // than at the gate.  The list was compared against the tree by hand on
+    // 2026-10-04; see FORK-NOTES.md sections 12 and 32.
     .name = .tzdata,
     .version = "0.1.0",
     .minimum_zig_version = "0.16.0",
@@ -14,22 +18,42 @@
         "build.zig",
         "build.zig.zon",
         // Fork additions: build glue, aggregate header, facade, tests,
-        // separate consumer package, provenance tool and CI.
+        // separate consumer package, provenance tool, the runtime route and CI.
         "include",
+        "runtime",
         "src",
         "test",
-        "consumer",
+        "consumer/build.zig",
+        "consumer/build.zig.zon",
+        "consumer/src/main.zig",
+        "consumer/data/consumer.zi",
         "tools",
         "PROVENANCE.sha256",
         ".github",
         ".gitignore",
         // Fork documentation, named one by one: a wildcard would add a
-        // future file to the package without anyone recording it.
+        // future file to the package without anyone recording it.  README.md
+        // is this fork's own; README.upstream.md holds upstream's bytes,
+        // which `zig build provenance` checks against README.
+        "README.md",
+        "README.upstream.md",
         "README.zig.md",
         "UPSTREAM.md",
         "NOTICE.md",
         "CHANGELOG.md",
         "FORK-NOTES.md",
+        "FORK-LICENSE.md",
+        // Nix packaging and the canonical development shell.
+        "package.nix",
+        "flake.nix",
+        "flake.lock",
+        // The lock travels with the flake: it pins the same nixpkgs revision
+        // `flake.nix` already names, and a fetched tarball without it cannot
+        // resolve that input.  `devenv.lock` does not exist in this tree, so
+        // nothing here names it.  See FORK-NOTES.md section 32.
+        "devenv.nix",
+        "devenv.yaml",
+        ".envrc",
         // Upstream top-level files, preserved byte for byte.  All 53 files
         // recorded in PROVENANCE.sha256 appear below.
         "CONTRIBUTING",

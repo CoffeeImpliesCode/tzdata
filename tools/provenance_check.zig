@@ -5,6 +5,12 @@
 //! upstream file means either an accidental edit or a divergence that is not
 //! recorded in CHANGELOG.md.
 //!
+//! It then verifies the README relocation: upstream's `README` is preserved
+//! under a different name, so the copy and the original must stay identical.
+//! That is the one upstream file a fork file would otherwise shadow, and the
+//! manifest cannot express it - the manifest records `README`, not the
+//! preserved copy.
+//!
 //! Usage: tzdata-provenance <manifest> <root-directory>
 
 const std = @import("std");
@@ -52,5 +58,24 @@ pub fn main(init: std.process.Init) !void {
         checked += 1;
     }
 
-    try stdout.print("provenance ok: {d} upstream files unchanged\n", .{checked});
+    // The README relocation: upstream's `README` is preserved as
+    // `README.upstream.md`, and the fork's own `README.md` is a separate
+    // file.  The manifest above proves the original is unchanged; this proves
+    // the copy is still the same bytes.
+    const original = std.fs.path.join(arena, &.{ root, "README" }) catch return error.OutOfMemory;
+    const preserved = std.fs.path.join(arena, &.{ root, "README.upstream.md" }) catch return error.OutOfMemory;
+    const original_bytes = std.Io.Dir.cwd().readFileAlloc(io, original, arena, read_limit) catch |err| {
+        try stdout.print("provenance: cannot read {s}: {t}\n", .{ original, err });
+        return error.ProvenanceMismatch;
+    };
+    const preserved_bytes = std.Io.Dir.cwd().readFileAlloc(io, preserved, arena, read_limit) catch |err| {
+        try stdout.print("provenance: cannot read {s}: {t}\n", .{ preserved, err });
+        return error.ProvenanceMismatch;
+    };
+    if (!std.mem.eql(u8, original_bytes, preserved_bytes)) {
+        try stdout.print("provenance: {s} is not the preserved copy of {s}\n", .{ preserved, original });
+        return error.ProvenanceMismatch;
+    }
+
+    try stdout.print("provenance ok: {d} upstream files unchanged, {s} matches {s}\n", .{ checked, preserved, original });
 }

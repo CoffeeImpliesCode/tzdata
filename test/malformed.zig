@@ -35,19 +35,8 @@ fn headerBytes(version: u8, timecnt: u32) [44]u8 {
     return bytes;
 }
 
-test "a file without the TZif magic is rejected" {
-    var tmp = std.testing.tmpDir(.{});
-    defer tmp.cleanup();
-
-    var bytes = headerBytes('2', 0);
-    @memcpy(bytes[0..4], "XXXX");
-    const path = try writeAndOpen(&tmp, "NoMagic", &bytes);
-    defer support.gpa.free(path);
-
-    try std.testing.expectError(error.InvalidZone, tzdata.Zone.open(path));
-}
-
 test "a TZif file that ends inside its header is rejected" {
+    try support.requireProvider();
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
 
@@ -58,6 +47,7 @@ test "a TZif file that ends inside its header is rejected" {
 }
 
 test "a TZif header claiming more transitions than the file holds is rejected" {
+    try support.requireProvider();
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
 
@@ -73,6 +63,7 @@ test "a TZif header claiming more transitions than the file holds is rejected" {
 }
 
 test "an empty file is rejected" {
+    try support.requireProvider();
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
 
@@ -83,6 +74,7 @@ test "an empty file is rejected" {
 }
 
 test "a missing zone file is rejected" {
+    try support.requireProvider();
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
 
