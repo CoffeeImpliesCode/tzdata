@@ -1,8 +1,4 @@
 # yaml-language-server: $schema=https://devenv.sh/devenv.schema.json
-#
-# Pinned rev, not a branch.  `devenv.lock` is owned by the driver and must
-# resolve exactly this input.  The same rev is what the other devenv
-# environments in this workspace use, so one nixpkgs tree is shared.
 inputs:
   nixpkgs:
     url: github:cachix/devenv-nixpkgs/c2f38fe7f9e04d9aadd354d380f2bd40531d9737

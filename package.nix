@@ -1,9 +1,4 @@
-# Source-only derivation for the tzdata SDK.
-#
-# One injected function, one derivation.  The `linkage` argument selects the
-# native library form and nothing else; variants are chosen at the call sites
-# (flake.nix, devenv.nix), never inside this file.  No workspace import, no
-# host path, no build-time download.
+# Source-only derivation; linkage selects the library form.
 
 { lib
 , stdenv
@@ -15,8 +10,6 @@ assert lib.assertMsg (linkage == "static" || linkage == "dynamic")
   "package.nix: linkage must be \"static\" or \"dynamic\", got ${builtins.toString linkage}";
 
 let
-  # Bound here rather than read off the attribute set: an attribute name is not
-  # a variable, so the source name below could not interpolate them.
   pname = "tzdata";
   version = "0.1.0+2026e";
 in
@@ -24,9 +17,7 @@ in
 stdenv.mkDerivation {
   inherit pname version;
 
-  # Drop VCS and tool state only.  Every source, data, test, fixture and licence
-  # file stays, including all 53 entries PROVENANCE.sha256 names, so checkPhase
-  # runs against the packaged tree.
+  # Keep source, data, tests and licences; drop VCS and tool state.
   src = lib.cleanSourceWith {
     src = ./.;
     name = "${pname}-${version}";
@@ -50,14 +41,11 @@ stdenv.mkDerivation {
   strictDeps = true;
   nativeBuildInputs = [ zig ];
 
-  # The Zig setup hook replaces a phase only while it is empty, so these two
-  # run our commands instead of its default `zig build` then `zig build install`.
+  # The install phase runs the Zig build graph instead of setup-hook phases.
   dontConfigure = true;
   dontBuild = true;
 
-  # build.zig installs the library, zic, both public headers, the upstream zone
-  # tables and manual pages, the licence files and lib/pkgconfig/tzdata.pc.
-  # Nothing is written here: one writer per path.
+  # build.zig owns the installed library, data, headers and metadata.
   installPhase = ''
     runHook preInstall
 
@@ -65,12 +53,7 @@ stdenv.mkDerivation {
     export ZIG_LOCAL_CACHE_DIR="''${TMPDIR:-/tmp}/zig-local-cache"
     mkdir -p "$ZIG_GLOBAL_CACHE_DIR" "$ZIG_LOCAL_CACHE_DIR"
 
-    # --prefix is what makes $out/share/zoneinfo the compiled-in TZDIR:
-    # build.zig resolves the installed database directory, publishes the tree
-    # zic compiled there, and makes the library step depend on that copy.
-    # -Dtz-dir repeats that resolution as an assertion, because build.zig
-    # rejects any other value; prefix/$out drift then fails at configure time
-    # instead of producing a library that cannot open a zone by plain name.
+    # Keep compiled TZDIR aligned with the installed zoneinfo path.
     zig build install \
       --prefix "$out" \
       -j"''${NIX_BUILD_CORES:-1}" \
@@ -83,8 +66,7 @@ stdenv.mkDerivation {
     runHook postInstall
   '';
 
-  # Provenance over the packaged tree: the recorded upstream hashes, and that
-  # README.upstream.md is still the preserved copy of upstream's README.
+  # Check upstream hashes and the preserved README.
   doCheck = true;
   checkPhase = ''
     runHook preCheck

@@ -1,16 +1,4 @@
-//! Licence and provenance integrity gate.
-//!
-//! Reads a `sha256sum`-style manifest and verifies that every listed upstream
-//! file is byte-for-byte unchanged.  The fork only ever adds files; a modified
-//! upstream file means either an accidental edit or a divergence that is not
-//! recorded in CHANGELOG.md.
-//!
-//! It then verifies the README relocation: upstream's `README` is preserved
-//! under a different name, so the copy and the original must stay identical.
-//! That is the one upstream file a fork file would otherwise shadow, and the
-//! manifest cannot express it - the manifest records `README`, not the
-//! preserved copy.
-//!
+//! Verify upstream hashes and the byte-identical README relocation.
 //! Usage: tzdata-provenance <manifest> <root-directory>
 
 const std = @import("std");
@@ -58,10 +46,7 @@ pub fn main(init: std.process.Init) !void {
         checked += 1;
     }
 
-    // The README relocation: upstream's `README` is preserved as
-    // `README.upstream.md`, and the fork's own `README.md` is a separate
-    // file.  The manifest above proves the original is unchanged; this proves
-    // the copy is still the same bytes.
+    // The manifest checks the original path; compare it with the preserved copy.
     const original = std.fs.path.join(arena, &.{ root, "README" }) catch return error.OutOfMemory;
     const preserved = std.fs.path.join(arena, &.{ root, "README.upstream.md" }) catch return error.OutOfMemory;
     const original_bytes = std.Io.Dir.cwd().readFileAlloc(io, original, arena, read_limit) catch |err| {

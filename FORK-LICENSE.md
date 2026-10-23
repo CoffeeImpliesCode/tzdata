@@ -1,23 +1,8 @@
-# Licence of this fork's own additions
+# Fork licence
 
-The licence of files **this fork adds**, as distinct from the upstream tz
-distribution it ships.  Upstream's terms are in `LICENSE` and are inventoried
-per file in `NOTICE.md`; they are not restated as a grant here.
-
-## 1. Owner authorization
-
-The repository owner directly authorized a per-project licence for
-fork-authored additions, chosen to match the project's upstream terms where
-appropriate.  Records written before that authorization described the earlier
-state, not the grant now in force.
-
-## 2. The grant
+This grant covers only fork-authored files listed in `UPSTREAM.md`. The repository owner authorized it; no individual holder is named. Upstream terms remain in the unmodified `LICENSE` and are inventoried in `NOTICE.md`.
 
 `SPDX-License-Identifier: Unlicense`
-
-The fork-authored files listed in `UPSTREAM.md` are dedicated to the public
-domain, with the Unlicense as the instrument.  Granted by the repository
-owner; no individual is named as holder.
 
 ```
 This is free and unencumbered software released into the public domain.
@@ -46,34 +31,10 @@ OTHER DEALINGS IN THE SOFTWARE.
 For more information, please refer to <https://unlicense.org/>
 ```
 
-Facts about the scope, stated once:
+Not covered: upstream `strftime.c` (`libtz` source), `date.c`, and `newstrftime.3` (BSD-3-Clause); upstream's unchanged `README.upstream.md`. `.gitignore` is upstream with fork exclusions; modified, without SPDX header, and absent from `PROVENANCE.sha256`.
 
-* It covers only files this fork authored.  It does not re-grant, change,
-  waive or extend any upstream file's terms, and attributes nothing to
-  upstream's authors.
-* Upstream uses no SPDX identifier; `Unlicense` is the SPDX form used for the
-  fork's own files, because SPDX carries no bare public-domain identifier.
-* Per-file upstream exceptions are untouched.  `strftime.c` — a source file
-  of `libtz` — is BSD-3-Clause; `date.c` and `newstrftime.3` are BSD-3-Clause
-  and ship as preserved upstream material.  See `NOTICE.md` § 2.
+## SPDX by path
 
-## 3. SPDX identifier by path
+`Unlicense`: `build.zig`, `build.zig.zon`, `include/tzdata.h`, `src/*.zig`, `test/*.zig`, `consumer/**/*.zig`, `tools/*.zig`; `README.md`, `README.zig.md`, `CHANGELOG.md`, `NOTICE.md`, `UPSTREAM.md`, `FORK-NOTES.md`, `FORK-LICENSE.md`; `package.nix`, `flake.nix`, `devenv.nix`, `devenv.yaml`, `.envrc`, `PROVENANCE.sha256`.
 
-| Path | SPDX identifier |
-| --- | --- |
-| `build.zig`, `build.zig.zon` | `Unlicense` |
-| `include/tzdata.h` | `Unlicense`; content transcribed from public-domain `private.h` |
-| `src/*.zig`, `test/*.zig`, `consumer/**/*.zig`, `tools/*.zig` | `Unlicense` |
-| `README.md`, `README.zig.md`, `CHANGELOG.md`, `NOTICE.md`, `UPSTREAM.md`, `FORK-NOTES.md`, `FORK-LICENSE.md` | `Unlicense` |
-| `package.nix`, `flake.nix`, `devenv.nix`, `devenv.yaml`, `.envrc` | `Unlicense` |
-| `.github/workflows/ci.yml` | `Unlicense` |
-| `PROVENANCE.sha256` | `Unlicense`; a manifest of hashes, not upstream material |
-| `README.upstream.md`, `.gitignore` | **no header** — both must stay byte-identical to what `PROVENANCE.sha256` records |
-| every other file | see `NOTICE.md` |
-
-## 4. Redistribution
-
-Upstream's obligations travel with the source: the BSD-3-Clause notice and
-disclaimer for `strftime.c`, `date.c` and `newstrftime.3`, in a binary
-distribution as well as a source one.  Upstream `LICENSE` is installed
-unmodified next to this record, and `NOTICE.md` is the per-file inventory.
+`include/tzdata.h` is transcribed from public-domain `private.h`; `PROVENANCE.sha256` is a fork-authored hash manifest, not upstream material. Other files' terms are in `NOTICE.md`.

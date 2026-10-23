@@ -1,39 +1,6 @@
-//! Consumer of the tzdata package: converts instants with the module it
-//! depends on and checks the results against independently known civil times.
-//!
-//! Two databases are exercised.  The zones in `data/consumer.zi` are compiled
-//! by the dependency's own `zic` during the build, so this program needs no
-//! installed database and no network access; the build passes that tree's
-//! path as the first argument.  The IANA zones are opened by plain name with
-//! no path and no environment variable, which is what proves the dependency
-//! ships a usable database on its own.  The last conversion goes through the
-//! translated C declarations directly, with its own reentrant handle, so the
-//! aggregate header and the `tz_` namespace are exercised too.  Any mismatch
-//! exits non-zero.
-//!
-//! ## Naming a provider, in a runtime-loaded build
-//!
-//! When the dependency was configured to resolve its native symbols at run
-//! time, nothing is linked into this program and there is no fallback: this
-//! one has to say which library to open, with `--provider <path>` anywhere on
-//! the command line or through the `TZDATA_PROVIDER` environment variable.
-//! It never silently uses the bundled linkage - if the dependency is
-//! runtime-loaded and neither names one, this exits non-zero rather than
-//! passing.  Passing `--provider` to a *linked* dependency is refused rather
-//! than ignored, because there would be nothing for it to do.
-//!
-//! ## The provider's data
-//!
-//! A plain zone name is resolved by the library below the `TZDIR` that was
-//! compiled into *it*, which is `<that provider's install prefix>/share/zoneinfo`
-//! when it came from this package's own graph.  That tree has to be present at
-//! run time and it is not this program's to choose.  The dependency installs
-//! exactly what its `-Dlinkage` asked for and nothing else, so under the
-//! default static linkage it produces no loadable artefact and the provider is
-//! supplied separately; build one first with `-Dlinkage=dynamic` if this
-//! program has to name a path.  A zone opened by absolute path, and a POSIX TZ
-//! specification, need no database at all, which is why the raw conversions
-//! below work even when no tree is reachable.
+//! Exercise tzdata conversions through the downstream package.
+//! Check compiled zones, bundled IANA zones, and raw translated C declarations.
+//! Runtime-loaded builds require a provider; linked builds reject one.
 
 const std = @import("std");
 const Io = std.Io;
@@ -44,15 +11,13 @@ const provider_variable = "TZDATA_PROVIDER";
 
 const Case = struct {
     timestamp: i64,
-    /// Independently known local time, abbreviation and UTC offset.
+    /// Expected local time, abbreviation, and UTC offset.
     local: [:0]const u8,
     abbreviation: [:0]const u8,
     offset: i64,
 };
 
-/// Etc/Consumer is -05:00 "Cst" outside the 2030 daylight saving season and
-/// -04:00 "Cdt" inside it; 2030-03-10T07:00:00Z and 2030-11-03T06:00:00Z are
-/// the two transitions.
+/// `Etc/Consumer` changes from CST (-05:00) to CDT (-04:00) at these instants.
 const cases = [_]Case{
     .{
         .timestamp = -1, // one second before the epoch
@@ -92,11 +57,7 @@ const cases = [_]Case{
     },
 };
 
-/// Zones of the bundled IANA database, opened by plain name.  The instants
-/// are chosen so the civil time is known without consulting the database:
-/// Berlin is on European summer time in June and on standard time in
-/// November, and New York is on standard time before its March transition
-/// and on daylight time in June.
+/// Known Berlin and New York conversions across their daylight-saving seasons.
 const bundled_cases = [_]struct { zone: [:0]const u8, case: Case }{
     .{
         .zone = "Europe/Berlin",
@@ -139,8 +100,7 @@ const bundled_cases = [_]struct { zone: [:0]const u8, case: Case }{
 pub fn main(init: std.process.Init) !void {
     const arena = init.arena.allocator();
 
-    // The build passes the database its own zic compiled as the first
-    // argument; a run step's output directory has no path at configure time.
+    // The first argument is the generated zoneinfo directory.
     const args = try init.minimal.args.toSlice(arena);
     if (args.len < 2) return error.MissingZoneinfoDirectory;
     const zoneinfo = args[1];
@@ -153,8 +113,7 @@ pub fn main(init: std.process.Init) !void {
     defer stdout.flush() catch {};
 
     if (comptime tzdata.runtime_loaded) {
-        // The loader retains its own copy for the life of the process, so this
-        // is a stable pointer into that copy rather than into `arena`.
+        // The loader retains its own request copy.
         const loaded = tzdata.loadedSource().?;
         try stdout.print("provider {s}\n", .{switch (loaded) {
             .path => |path| path,
@@ -185,7 +144,7 @@ pub fn main(init: std.process.Init) !void {
         if (try zone.toUtc(converted) != case.timestamp) return error.UnexpectedRoundTrip;
     }
 
-    // The same zone reached through a UTC database entry, and strftime.
+    // Exercise a direct TZif path and `strftime`.
     const utc_path = try std.fmt.allocPrintSentinel(arena, "{s}/Etc/ConsumerUTC", .{zoneinfo}, 0);
     var utc_zone = try tzdata.Zone.open(utc_path);
     defer utc_zone.close();
@@ -197,8 +156,7 @@ pub fn main(init: std.process.Init) !void {
     });
     if (!std.mem.eql(u8, utc_rendered, "2030-11-03T06:00:00+00:00")) return error.UnexpectedUtc;
 
-    // Plain names only: whatever path the dependency compiled its database
-    // into, the module alone must be able to open these.
+    // Plain names exercise the provider's bundled IANA database.
     for (bundled_cases) |bundled| {
         var bundled_zone = try tzdata.Zone.open(bundled.zone);
         defer bundled_zone.close();
@@ -223,20 +181,11 @@ pub fn main(init: std.process.Init) !void {
         }
     }
 
-    // One conversion through the translated C declarations themselves, which
-    // is the only path that exercises the aggregate header, the `tz_`
-    // namespace and the target ABI without the typed layer in between.
+    // Check the raw C ABI through the translated declarations.
     try rawHandleConversion(stdout);
 }
 
-/// Convert the epoch with `tz_tzalloc`, `tz_localtime_rz` and `tz_tzfree`
-/// exactly as a C caller would, and release the handle exactly once.
-///
-/// Europe/Berlin is one hour east of UTC in January, so the epoch is
-/// 1970-01-01 01:00:00 local time.  The zone is named, not opened by path, so
-/// this conversion does depend on the provider's TZif tree - which is the
-/// point: it is the one conversion here that exercises the provider's data
-/// resource rather than a compiled-in rule.
+/// Convert the epoch with a provider-owned handle against the bundled TZif data.
 fn rawHandleConversion(stdout: *std.Io.Writer) !void {
     const handle = tzdata.c.tz_tzalloc("Europe/Berlin");
     if (tzdata.pointerIsNull(handle)) return error.InvalidZone;
@@ -265,12 +214,7 @@ fn rawHandleConversion(stdout: *std.Io.Writer) !void {
         if (raw.tm_gmtoff != 3600) return error.UnexpectedRawOffset;
     }
 
-    // The three exported objects are read through the provider's own storage,
-    // never through a value captured at load time.  A reentrant handle never
-    // publishes into them (`localtime.c:2891`), so they still hold whatever the
-    // ambient zone last wrote and this consumer has no reason to expect any
-    // particular value - it only proves they are readable where the build
-    // emits them at all.
+    // Read provider-owned globals to confirm their exported addresses are usable.
     if (comptime tzdata.Ambient.usg_compat_emitted) {
         try stdout.print(
             "c.tz_timezone={d} c.tz_daylight={d} c.tz_tzname[0]={s}\n",
@@ -283,12 +227,7 @@ fn rawHandleConversion(stdout: *std.Io.Writer) !void {
     }
 }
 
-/// Name the provider and load it, or say exactly what is missing.
-///
-/// `--provider <path>` wins over `TZDATA_PROVIDER`; neither is a search path,
-/// and there is no fallback from one to the other.  The environment value is
-/// copied into `arena` because the loader retains its own copy anyway and the
-/// caller's buffer is not required to outlive the call.
+/// Load the named provider; linked builds reject provider arguments.
 fn loadProvider(
     init: std.process.Init,
     arena: std.mem.Allocator,
@@ -301,9 +240,7 @@ fn loadProvider(
     }
 
     if (comptime !tzdata.runtime_loaded) {
-        // A linked dependency has the library in its link line; there is
-        // nothing to load and nothing a provider name could change, so saying
-        // so beats quietly ignoring the argument.
+        // A linked build has no provider to load.
         if (named_on_command_line != null) return error.ProviderNamedForLinkedBuild;
         return;
     }
