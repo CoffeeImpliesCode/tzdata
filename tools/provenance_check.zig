@@ -36,7 +36,7 @@ pub fn main(init: std.process.Init) !void {
         var digest: [std.crypto.hash.sha2.Sha256.digest_length]u8 = undefined;
         std.crypto.hash.sha2.Sha256.hash(bytes, &digest, .{});
         var actual: [std.crypto.hash.sha2.Sha256.digest_length * 2]u8 = undefined;
-        _ = std.fmt.bufPrint(&actual, "{x}", .{&digest}) catch unreachable;
+        _ = std.mem.print(&actual, "{x}", .{&digest}) catch unreachable;
         if (!std.ascii.eqlIgnoreCase(expected, &actual)) {
             try stdout.print("provenance: {s} differs from the recorded hash\n  expected {s}\n  actual   {s}\n", .{
                 name, expected, &actual,

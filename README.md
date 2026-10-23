@@ -1,6 +1,6 @@
 # IANA Time Zone Database for Zig
 
-IANA Time Zone Database (`eggert/tz`) release `2026e`, built as a Zig 0.16.0 package.
+IANA Time Zone Database (`eggert/tz`) release `2026e`, built as a Zig 0.17.0 package.
 It builds tzcode, its zone database, and a typed Zig facade.
 
 ## Source deviations from upstream
@@ -23,7 +23,7 @@ It builds tzcode, its zone database, and a typed Zig facade.
 
 ## Support matrix
 
-Zig 0.16.0. The configured compile targets use 64-bit `time_t`.
+Zig 0.17.0. The configured compile targets use 64-bit `time_t`.
 
 | Target | Support and platform boundary |
 |---|---|

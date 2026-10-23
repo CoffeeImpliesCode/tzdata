@@ -1,7 +1,11 @@
 # Changelog
 
 Fork changes to upstream `2026e`; upstream release changes are in `NEWS`.
-
+- Port to Zig 0.17.0.
+- Nested consumer builds pass cache and toolchain paths through environment variables and use absolute fixture paths.
+- `zic` receives target-specific C feature settings, including Windows portability macros.
+- Nested consumer builds now inherit the outer build's resolved install prefix, including the default.
+- Cross-target consumer builds install the executable when no executor can run it.
 - Nested `consumer` builds forward global-cache and executor settings alongside target, runtime and linkage selections.
 - `devenv` commands run from this package, forward build arguments and use an external prefix for install-producing steps.
 - `Tm.iso8601` handles out-of-range month values and the full `i64` offset range without integer overflow.

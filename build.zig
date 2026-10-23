@@ -5,7 +5,7 @@ const std = @import("std");
 const Build = std.Build;
 const Step = std.Build.Step;
 const Module = std.Build.Module;
-const OptimizeMode = std.builtin.OptimizeMode;
+const Optimize = std.lang.Optimize;
 
 /// Runtime-loader build graph.
 const graph = @import("runtime/graph.zig");
@@ -242,9 +242,11 @@ fn enabledTranslatedMacros(defines: []const Define, allocator: std.mem.Allocator
 fn zoneDataDigest(b: *Build) [8]u8 {
     var hasher = std.crypto.hash.sha2.Sha256.init(.{});
     for (data_sources) |name| {
-        const bytes = b.build_root.handle.readFileAlloc(
+        const source_path = b.root.join(b.allocator, name) catch @panic("OOM");
+        b.dependOnFileContents(b.path(name));
+        const bytes = source_path.root_dir.handle.readFileAlloc(
             b.graph.io,
-            name,
+            source_path.sub_path,
             b.allocator,
             .limited(64 * 1024 * 1024),
         ) catch |err| std.debug.panic("unable to read zone source {s}: {s}", .{
@@ -261,23 +263,20 @@ fn zoneDataDigest(b: *Build) [8]u8 {
 }
 
 /// Build-cache directory for zic's digest-specific TZif tree.
-fn bundledZoneinfoDir(b: *Build) []const u8 {
-    const cache_root = b.cache_root.path orelse ".";
-    const absolute_root = if (std.fs.path.isAbsolute(cache_root))
-        cache_root
-    else
-        b.pathJoin(&.{ b.graph.cache.cwd, cache_root });
+fn bundledZoneinfoDir(b: *Build) Build.LazyPath {
     const hex = std.fmt.bytesToHex(zoneDataDigest(b), .lower);
-    const hex_text: []const u8 = &hex;
-    const joined = b.fmt("{s}/tzdata-zoneinfo-{s}", .{ absolute_root, hex_text });
-    return tzdirPathForC(b, joined);
+    return .{ .relative = .{
+        .base = .local_cache,
+        .sub_path = b.fmt("tzdata-zoneinfo-{s}", .{&hex}),
+    } };
 }
 
-/// Install path compiled into the library's TZDIR.
-fn installedZoneinfoDir(b: *Build) []const u8 {
-    const raw = b.getInstallPath(.prefix, "share/zoneinfo");
-    checkTzdirPath(raw);
-    return tzdirPathForC(b, raw);
+/// Installation path compiled into the library's TZDIR.
+fn installedZoneinfoPath() Build.LazyPath {
+    return .{ .relative = .{
+        .base = .install_prefix,
+        .sub_path = "share/zoneinfo",
+    } };
 }
 
 /// Validate an absolute, quote-free TZDIR before generating `tzdir.h`.
@@ -297,19 +296,14 @@ fn checkUserTzdirPath(path: []const u8) void {
     }
 }
 
-/// Normalize Windows separators for the C string and filesystem path.
-fn tzdirPathForC(b: *Build, path: []const u8) []const u8 {
-    if (std.mem.indexOf(u8, path, "\\") == null) return path;
-    return std.mem.replaceOwned(u8, b.allocator, path, "\\", "/") catch @panic("OOM");
-}
-
 /// Build the library, translated module, and zic for one target.
 fn addCore(
     b: *Build,
     target: Build.ResolvedTarget,
-    optimize: OptimizeMode,
+    optimize: Optimize,
     generated: *Step.WriteFile,
-    linkage: std.builtin.LinkMode,
+    tzdir_header: Build.LazyPath,
+    linkage: std.lang.LinkMode,
     runtime_loaded: bool,
 ) Core {
     const defines = cDefines(b, target);
@@ -326,6 +320,7 @@ fn addCore(
     });
     library_module.addIncludePath(b.path("."));
     library_module.addIncludePath(generated.getDirectory());
+    library_module.addIncludePath(tzdir_header.dirname());
     configureCMacros(library_module, defines);
     const library = b.addLibrary(.{
         .name = "tz",
@@ -347,6 +342,7 @@ fn addCore(
     });
     zic_module.addIncludePath(b.path("."));
     zic_module.addIncludePath(generated.getDirectory());
+    zic_module.addIncludePath(tzdir_header.dirname());
     configureCMacros(zic_module, defines);
     const zic = b.addExecutable(.{ .name = "zic", .root_module = zic_module });
     zic_module.addCSourceFiles(.{ .files = &.{"zic.c"}, .flags = &.{"-std=gnu17"} });
@@ -419,7 +415,7 @@ fn addPkgConfig(
     b: *Build,
     defines: []const Define,
     version: []const u8,
-    linkage: std.builtin.LinkMode,
+    linkage: std.lang.LinkMode,
 ) void {
     var writer: std.Io.Writer.Allocating = .init(b.allocator);
     defer writer.deinit();
@@ -470,7 +466,7 @@ fn attachFacade(
     module: *Module,
     b: *Build,
     target: Build.ResolvedTarget,
-    optimize: OptimizeMode,
+    optimize: Optimize,
     core: Core,
 ) void {
     module.addImport("tz_c", core.c_module);
@@ -483,7 +479,7 @@ fn attachFacade(
 fn addFacadeModule(
     b: *Build,
     target: Build.ResolvedTarget,
-    optimize: OptimizeMode,
+    optimize: Optimize,
     core: Core,
 ) *Module {
     const module = b.addModule("tzdata", .{
@@ -499,9 +495,9 @@ fn addFacadeModule(
 fn addTestModule(
     b: *Build,
     target: Build.ResolvedTarget,
-    optimize: OptimizeMode,
+    optimize: Optimize,
     tz_module: *Module,
-    test_options: *Step.Options,
+    test_options: *Module,
 ) *Module {
     const module = b.createModule(.{
         .root_source_file = b.path("test/root.zig"),
@@ -510,7 +506,7 @@ fn addTestModule(
         .link_libc = true,
     });
     module.addImport("tzdata", tz_module);
-    module.addImport("build_options", test_options.createModule());
+    module.addImport("build_options", test_options);
     return module;
 }
 
@@ -665,25 +661,19 @@ fn checkTargetPartition(b: *Build) void {
     }
 }
 
-/// Return whether `std.Build.Step.Run` can execute this target.
-/// Mirrors its executor branches and cross-libc runtime requirement.
+/// Return whether `std.Build.Step.Run` can execute the target without an explicit executor.
 fn hostCanExecute(b: *Build, target: Build.ResolvedTarget) bool {
     const host = &b.graph.host.result;
     const candidate = &target.result;
     const options: std.zig.system.GetExternalExecutorOptions = .{
-        .allow_darling = b.enable_darling,
-        .allow_qemu = b.enable_qemu,
-        .allow_wasmtime = b.enable_wasmtime,
-        .allow_wine = b.enable_wine,
-        .qemu_fixes_dl = candidate.isGnuLibC() and b.libc_runtimes_dir != null,
+        .host_cpu_arch = host.cpu.arch,
+        .host_os_tag = host.os.tag,
+        .link_mode = .dynamic,
         .link_libc = true,
     };
-    return switch (std.zig.system.getExternalExecutor(b.graph.io, host, candidate, options)) {
-        .native, .rosetta => true,
-        // GNU libc targets also need `--libc-runtimes` under QEMU.
-        .qemu => !candidate.isGnuLibC() or b.libc_runtimes_dir != null,
-        .wine, .wasmtime, .darling => true,
-        .bad_dl, .bad_os_or_cpu => false,
+    return switch (std.zig.system.getExternalExecutor(b.graph.io, candidate, options)) {
+        .native => true,
+        else => false,
     };
 }
 
@@ -701,7 +691,7 @@ pub fn build(b: *std.Build) !void {
     ) orelse "2026e";
 
     const linkage = b.option(
-        std.builtin.LinkMode,
+        std.lang.LinkMode,
         "linkage",
         "Link the tz library statically or dynamically (default: static)",
     ) orelse .static;
@@ -715,32 +705,15 @@ pub fn build(b: *std.Build) !void {
             "-Dlinkage, which still decides the form of the installed library.",
     ) orelse false;
 
-    // The installed database path is compiled into the library's TZDIR.
-    // Do not use the disposable build-cache tree here.
-    const installed_zoneinfo = installedZoneinfoDir(b);
-    if (b.option(
+    // Install-prefix paths are resolved by the maker, not during graph configuration.
+    const installed_zoneinfo = installedZoneinfoPath();
+    const requested_tz_dir = b.option(
         []const u8,
         "tz-dir",
-        "Absolute TZDIR compiled into the library. It must be the installed " ++
-            "database directory, <install prefix>/share/zoneinfo, because that is " ++
-            "the only tree this build produces; the default is that directory.",
-    )) |requested| {
-        checkUserTzdirPath(requested);
-        const requested_path = tzdirPathForC(b, requested);
-        if (!std.mem.eql(u8, requested_path, installed_zoneinfo)) {
-            std.debug.panic(
-                "zig build: -Dtz-dir must name the installed database " ++
-                    "directory, which is {s} for this invocation, but it is {s}. " ++
-                    "This build writes the TZif tree to exactly one place, so a " ++
-                    "TZDIR naming another compiles a library that cannot open " ++
-                    "a zone by plain name. Pass --prefix and drop -Dtz-dir.",
-                .{ installed_zoneinfo, requested_path },
-            );
-        }
-    }
-    const zoneinfo_dir = installed_zoneinfo;
+        "Assert the absolute installed database directory compiled into the library",
+    );
+    if (requested_tz_dir) |requested| checkUserTzdirPath(requested);
 
-    // zic writes to a cache tree keyed by the source digest.
     const bundled_zoneinfo = bundledZoneinfoDir(b);
 
     // Generate the headers normally produced by upstream's Makefile.
@@ -751,17 +724,26 @@ pub fn build(b: *std.Build) !void {
         \\static char const REPORT_BUGS_TO[] = "tz@iana.org";
         \\
     , .{version}));
-    _ = generated.add("tzdir.h", b.fmt(
-        \\#ifndef TZDEFAULT
-        \\# define TZDEFAULT "/etc/localtime" /* default zone */
-        \\#endif
-        \\#ifndef TZDIR
-        \\# define TZDIR "{s}" /* TZif directory */
-        \\#endif
-        \\
-    , .{zoneinfo_dir}));
 
-    const core = addCore(b, target, optimize, generated, linkage, runtime_loaded);
+    const tzdir_generator = b.addExecutable(.{
+        .name = "tzdata-tzdir-header",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("tools/tzdir_header.zig"),
+            .target = b.graph.host,
+            .optimize = .debug,
+        }),
+    });
+    const tzdir_run = b.addRunArtifact(tzdir_generator);
+    tzdir_run.addArg("--zoneinfo");
+    tzdir_run.addDirectoryArg2(installed_zoneinfo, .{ .make_absolute = true });
+    if (requested_tz_dir) |requested| {
+        tzdir_run.addArg("--expected");
+        tzdir_run.addArg(requested);
+    }
+    tzdir_run.addArg("--output");
+    const tzdir_header = tzdir_run.addOutputFileArg2("tzdir.h", .{ .make_absolute = true });
+
+    const core = addCore(b, target, optimize, generated, tzdir_header, linkage, runtime_loaded);
     const module = addFacadeModule(b, target, optimize, core);
 
     // Cross builds use a host zic to compile the zone database.
@@ -769,15 +751,14 @@ pub fn build(b: *std.Build) !void {
     const host_core = if (target.query.isNative())
         core
     else
-        addCore(b, b.resolveTargetQuery(.{}), optimize, generated, .static, false);
+        addCore(b, b.resolveTargetQuery(.{}), optimize, generated, tzdir_header, .static, false);
 
-    // Write directly to the digest-specific tree named by the generated header.
-    const zoneinfo_tree: Build.LazyPath = .{ .cwd_relative = bundled_zoneinfo };
+    // Write directly to the digest-specific cache tree.
+    const zoneinfo_tree = bundled_zoneinfo;
     const zic_run = b.addRunArtifact(host_core.zic);
     zic_run.addArg("-d");
-    zic_run.addArg(bundled_zoneinfo);
-    for (data_sources) |source| zic_run.addFileArg(b.path(source));
-
+    zic_run.addDirectoryArg2(zoneinfo_tree, .{ .make_absolute = true });
+    for (data_sources) |source| zic_run.addFileArg2(b.path(source), .{});
     // Bind the generated tree to the library and install step; runtime mode does not link the library.
     // Wire zic explicitly because the source path carries no build dependency.
     const install_zoneinfo = b.addInstallDirectory(.{
@@ -815,18 +796,30 @@ pub fn build(b: *std.Build) !void {
     core.library.installHeader(b.path("include/tzdata.h"), "tzdata.h");
     core.library.installHeader(b.path("tzfile.h"), "tzfile.h");
 
-    // Tests use the host zic and installed zoneinfo path.
-    const installed_zoneinfo_tree: Build.LazyPath = .{ .cwd_relative = installed_zoneinfo };
-    const test_options = b.addOptions();
-    test_options.addOptionPath("zic_exe", host_core.zic.getEmittedBin());
-    test_options.addOptionPath("zoneinfo_dir", installed_zoneinfo_tree);
+    // Resolve both paths during make, when relative prefixes are known.
+    const test_options_generator = b.addExecutable(.{
+        .name = "tzdata-test-options",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("tools/test_options.zig"),
+            .target = b.graph.host,
+            .optimize = .debug,
+        }),
+    });
+    const test_options_run = b.addRunArtifact(test_options_generator);
+    test_options_run.addArg("--zoneinfo");
+    test_options_run.addDirectoryArg2(installed_zoneinfo, .{ .make_absolute = true });
+    test_options_run.addArg("--zic");
+    test_options_run.addFileArg2(host_core.zic.getEmittedBin(), .{ .make_absolute = true });
+    test_options_run.addArg("--output");
+    const test_options_source = test_options_run.addOutputFileArg2("test-options.zig", .{ .make_absolute = true });
+    const test_options = b.createModule(.{ .root_source_file = test_options_source });
 
     const unit_tests = b.addTest(.{
         .name = "tzdata-test",
         .root_module = addTestModule(b, target, optimize, module, test_options),
     });
     const unit_test_run = b.addRunArtifact(unit_tests);
-    unit_test_run.setCwd(.{ .cwd_relative = b.cache_root.path orelse "." });
+    unit_test_run.setCwd(Build.LazyPath.cache_root);
     // Bind the run directly: runtime mode does not link the library dependency.
     unit_test_run.step.dependOn(&install_zoneinfo.step);
     b.step("test", "Run the tzdata unit tests").dependOn(&unit_test_run.step);
@@ -845,7 +838,7 @@ pub fn build(b: *std.Build) !void {
     }));
     // Bind smoke runs to the installed tree, as runtime mode has no library dependency.
     smoke_run.step.dependOn(&install_zoneinfo.step);
-    if (b.args) |args| smoke_run.addArgs(args);
+    smoke_run.addPassthruArgs();
     b.step("smoke", "Run the deterministic smoke program").dependOn(&smoke_run.step);
 
     // Check licence and provenance integrity of the upstream files.
@@ -854,10 +847,10 @@ pub fn build(b: *std.Build) !void {
         .root_module = b.createModule(.{
             .root_source_file = b.path("tools/provenance_check.zig"),
             .target = b.resolveTargetQuery(.{}),
-            .optimize = .ReleaseSafe,
+            .optimize = .safe,
         }),
     }));
-    provenance_run.addFileArg(b.path("PROVENANCE.sha256"));
+    provenance_run.addFileArg2(b.path("PROVENANCE.sha256"), .{});
     provenance_run.addArg(".");
     b.step("provenance", "Verify preserved upstream files against PROVENANCE.sha256")
         .dependOn(&provenance_run.step);
@@ -870,7 +863,7 @@ pub fn build(b: *std.Build) !void {
     for (check_target_queries) |query| {
         const resolved = b.resolveTargetQuery(query);
         const triple = resolved.result.zigTriple(b.allocator) catch @panic("OOM");
-        const check_core = addCore(b, resolved, optimize, generated, .static, runtime_loaded);
+        const check_core = addCore(b, resolved, optimize, generated, tzdir_header, .static, runtime_loaded);
         const check_module = b.createModule(.{
             .root_source_file = b.path("src/root.zig"),
             .target = resolved,
@@ -901,10 +894,21 @@ pub fn build(b: *std.Build) !void {
     }
 
     // Run the real downstream consumer in a separate build step.
-    const consumer_run = b.addSystemCommand(&.{ b.graph.zig_exe, "build" });
+    const consumer_launcher = b.addExecutable(.{
+        .name = "tzdata-consumer-build",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("tools/consumer_build.zig"),
+            .target = b.graph.host,
+            .optimize = .debug,
+        }),
+    });
+    const consumer_run = b.addRunArtifact(consumer_launcher);
+    consumer_run.addDirectoryArg2(.{ .relative = .{ .base = .global_cache } }, .{ .make_absolute = true });
+    consumer_run.addDirectoryArg2(Build.LazyPath.zig_lib, .{ .make_absolute = true });
+    consumer_run.addArgs(&.{ b.graph.zig_exe, "build" });
     consumer_run.setCwd(b.path("consumer"));
-    // Run when the host can execute the target; otherwise install it.
-    consumer_run.addArg(if (hostCanExecute(b, target)) "run" else "install");
+    // Native targets can run directly; foreign targets use the nested conditional step.
+    consumer_run.addArg(if (hostCanExecute(b, target)) "run" else "consumer");
     // Preserve the target, CPU features, and optimization in the nested build.
     const consumer_triple = target.query.zigTriple(b.allocator) catch @panic("OOM");
     const consumer_cpu = target.query.serializeCpuAlloc(b.allocator) catch @panic("OOM");
@@ -918,47 +922,35 @@ pub fn build(b: *std.Build) !void {
     // Keep the consumer's version equal to the one generated by this build.
     consumer_run.addArg(b.fmt("-Dtz-version={s}", .{version}));
 
-    // Forward enabled executors and libc runtime paths to the nested build.
-    if (b.enable_darling) consumer_run.addArg("-fdarling");
-    if (b.enable_qemu) consumer_run.addArg("-fqemu");
-    if (b.enable_rosetta) consumer_run.addArg("-frosetta");
-    if (b.enable_wasmtime) consumer_run.addArg("-fwasmtime");
-    if (b.enable_wine) consumer_run.addArg("-fwine");
-    if (b.libc_runtimes_dir) |runtimes| consumer_run.addArgs(&.{ "--libc-runtimes", runtimes });
+    // Forward make-phase executor selections without reading hidden configure options.
+    consumer_run.addThirdPartyEnabledArgDarling(.{
+        .enabled = "-fdarling",
+        .disabled = "-fno-darling",
+    });
+    consumer_run.addThirdPartyEnabledArgQemu(.{ .enabled = "-fqemu", .disabled = "-fno-qemu" });
+    consumer_run.addThirdPartyEnabledArgRosetta(.{ .enabled = "-frosetta", .disabled = "-fno-rosetta" });
+    consumer_run.addThirdPartyEnabledArgWasmtime(.{ .enabled = "-fwasmtime", .disabled = "-fno-wasmtime" });
+    consumer_run.addThirdPartyEnabledArgWine(.{ .enabled = "-fwine", .disabled = "-fno-wine" });
+    // Zig 0.17 does not expose --libc-runtimes to the build configurator.
     consumer_run.addArg("-j8");
     consumer_run.addArgs(&.{ "--summary", "all" });
 
-    // Give the nested build its own local manifest cache.
-    if (b.cache_root.path) |cache| {
-        consumer_run.addArg("--cache-dir");
-        consumer_run.addArg(b.fmt("{s}/consumer", .{cache}));
-    }
+    // Isolate the consumer's local manifest cache and preserve the global cache.
+    consumer_run.addArg("--cache-dir");
+    consumer_run.addDirectoryArg2(.{ .relative = .{
+        .base = .local_cache,
+        .sub_path = "consumer",
+    } }, .{ .make_absolute = true });
 
-    // Preserve the inherited global cache for shared dependency downloads.
-    if (b.graph.global_cache_root.path) |global_cache| {
-        consumer_run.addArg("--global-cache-dir");
-        consumer_run.addArg(global_cache);
-    }
+    // The maker resolves the outer install prefix for the nested build.
+    consumer_run.addArg("--prefix");
+    consumer_run.addDirectoryArg2(.{ .relative = .{ .base = .install_prefix } }, .{ .make_absolute = true });
 
-    // Forward a non-default install prefix as an absolute path.
-    const default_prefix = b.build_root.join(b.allocator, &.{"zig-out"}) catch @panic("OOM");
-    if (!std.mem.eql(u8, b.install_prefix, default_prefix)) {
-        const prefix = if (std.fs.path.isAbsolute(b.install_prefix))
-            b.install_prefix
-        else
-            b.pathJoin(&.{ b.graph.cache.cwd, b.install_prefix });
-        consumer_run.addArg("--prefix");
-        consumer_run.addArg(prefix);
-    }
-
-    // Do not forward `-Dtz-dir`: child dependencies install under their own cache prefix.
-    // Let the nested build resolve and publish its own zoneinfo tree.
+    // Do not forward `-Dtz-dir`; the nested build checks it against its own resolved prefix.
 
     // Forward caller arguments after `--` to the consumer's run command.
-    if (b.args) |args| {
-        consumer_run.addArg("--");
-        consumer_run.addArgs(args);
-    }
+    consumer_run.addArg("--");
+    consumer_run.addPassthruArgs();
     // Always run this step; a cache hit would skip the consumer check.
     consumer_run.has_side_effects = true;
     b.step("consumer", "Run the consumer package (zig build run in consumer/)")

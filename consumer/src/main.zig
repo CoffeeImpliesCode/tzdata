@@ -121,7 +121,7 @@ pub fn main(init: std.process.Init) !void {
         }});
     }
 
-    const zone_path = try std.fmt.allocPrintSentinel(arena, "{s}/Etc/Consumer", .{zoneinfo}, 0);
+    const zone_path = try arena.printSentinel("{s}/Etc/Consumer", .{zoneinfo}, 0);
     var zone = try tzdata.Zone.open(zone_path);
     defer zone.close();
 
@@ -145,7 +145,7 @@ pub fn main(init: std.process.Init) !void {
     }
 
     // Exercise a direct TZif path and `strftime`.
-    const utc_path = try std.fmt.allocPrintSentinel(arena, "{s}/Etc/ConsumerUTC", .{zoneinfo}, 0);
+    const utc_path = try arena.printSentinel("{s}/Etc/ConsumerUTC", .{zoneinfo}, 0);
     var utc_zone = try tzdata.Zone.open(utc_path);
     defer utc_zone.close();
     const utc_converted = try utc_zone.toLocal(1919916000);

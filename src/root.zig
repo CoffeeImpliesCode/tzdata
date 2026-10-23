@@ -436,7 +436,7 @@ pub const Tm = struct {
     /// only failure, and nothing has been allocated when it is returned.
     pub fn zoneNameOwned(self: Tm, gpa: std.mem.Allocator) std.mem.Allocator.Error!?[:0]const u8 {
         const borrowed = self.zone orelse return null;
-        return try gpa.dupeZ(u8, borrowed);
+        return try gpa.dupeSentinel(u8, borrowed, 0);
     }
 
     /// Render as "YYYY-MM-DDTHH:MM:SS", built without locale input, plus
@@ -856,7 +856,7 @@ fn formatInto(
     // `errno` is a thread-local C int; std.c._errno() is the pointer libc's
     // own <errno.h> writes to for this thread.  The enum's backing type
     // differs per target, so the comparison value is narrowed to c_int.
-    const range: c_int = @intCast(@intFromEnum(std.c.E.RANGE));
+    const range: c_int = @intCast(@backingInt(std.c.E.RANGE));
     std.c._errno().* = 0;
     const length = c.tz_strftime(buffer.ptr, buffer.len, format.ptr, raw);
     if (length != 0) return try gpa.dupe(u8, buffer[0..length]);

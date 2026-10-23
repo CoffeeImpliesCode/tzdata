@@ -130,7 +130,7 @@ pub fn main(init: std.process.Init) !void {
         const converted = try zone.toLocal(probe.timestamp);
         const offset = try zone.utcOffset(probe.timestamp);
         const rendered = try converted.iso8601(arena, offset);
-        const abbreviation = if (converted.zone) |borrowed| try arena.dupeZ(u8, borrowed) else "?";
+        const abbreviation = if (converted.zone) |borrowed| try arena.dupeSentinel(u8, borrowed, 0) else "?";
 
         if (!std.mem.eql(u8, rendered, probe.local)) {
             try stdout.print("expected local time {s}, found {s}\n", .{ probe.local, rendered });

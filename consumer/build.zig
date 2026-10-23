@@ -19,7 +19,7 @@ pub fn build(b: *std.Build) void {
 
     // A null option is omitted, preserving the dependency's own linkage default.
     const linkage = b.option(
-        std.builtin.LinkMode,
+        std.lang.LinkMode,
         "linkage",
         "Forwarded to the tzdata dependency: which form of the library its " ++
             "build delivers and installs, the default static archive or a " ++
@@ -49,8 +49,8 @@ pub fn build(b: *std.Build) void {
 
     const zic_run = b.addRunArtifact(dep.artifact("zic"));
     zic_run.addArg("-d");
-    const zoneinfo = zic_run.addOutputDirectoryArg("zoneinfo");
-    zic_run.addFileArg(b.path("data/consumer.zi"));
+    const zoneinfo = zic_run.addOutputDirectoryArg2("zoneinfo", .{});
+    zic_run.addFileArg2(b.path("data/consumer.zi"), .{});
 
     const exe_module = b.createModule(.{
         .root_source_file = b.path("src/main.zig"),
@@ -62,11 +62,18 @@ pub fn build(b: *std.Build) void {
     const exe = b.addExecutable(.{ .name = "tzdata-consumer", .root_module = exe_module });
 
     const run = b.addRunArtifact(exe);
+    // The cross-target `consumer` step installs the artifact if execution is skipped.
+    run.failing_to_execute_foreign_is_an_error = false;
     // Forward arguments after argv[1], the generated zoneinfo directory.
-    run.addDirectoryArg(zoneinfo);
-    if (b.args) |args| run.addArgs(args);
+    run.addDirectoryArg2(zoneinfo, .{ .make_absolute = true });
+    run.addPassthruArgs();
 
     const run_step = b.step("run", "Run the consumer program against its own compiled zone data");
     run_step.dependOn(&run.step);
     b.installArtifact(exe);
+
+    // Foreign run steps may be skipped when no executor is available.
+    const consumer_step = b.step("consumer", "Run the consumer and install its executable");
+    consumer_step.dependOn(&run.step);
+    consumer_step.dependOn(b.getInstallStep());
 }
