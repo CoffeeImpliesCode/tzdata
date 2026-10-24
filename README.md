@@ -40,10 +40,8 @@ Zig 0.17.0. The configured compile targets use 64-bit `time_t`.
 
 Add the package in `build.zig.zon`:
 
-```zig
-.dependencies = .{
-    .tzdata = .{ .path = "../tzdata" },
-},
+```sh
+zig fetch --save git+https://github.com/CoffeeImpliesCode/tzdata#v0.1.0
 ```
 
 Import the facade from `build.zig`:
