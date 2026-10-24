@@ -206,7 +206,7 @@ fn generate(
     options: Options,
 ) Failure!struct { dispatch: []const u8, native: []const u8 } {
     const source_z = try readSentinel(io, arena, options.translate);
-    var tree = try Ast.parse(arena, source_z, .zig);
+    var tree = try Ast.parse(arena, source_z, .{ .mode = .zig });
     defer tree.deinit(arena);
 
     if (tree.errors.len != 0) {
@@ -542,9 +542,7 @@ fn planVariable(
                 const type_first = tree.firstToken(type_node);
                 const type_last = tree.lastToken(type_node);
                 // Preserve the declared pointer type without evaluating the extern object's address.
-                decl.field_type = tree.source[
-                    tree.tokenStart(type_first)..tree.tokenStart(type_last) + tree.tokenSlice(type_last).len
-                ];
+                decl.field_type = tree.source[tree.tokenStart(type_first) .. tree.tokenStart(type_last) + tree.tokenSlice(type_last).len];
                 decl.address_value = true;
                 return decl;
             }
@@ -586,9 +584,7 @@ fn dataTypeText(
         );
         return error.UnsupportedDeclaration;
     };
-    const text = tree.source[
-        tree.tokenStart(tree.firstToken(type_node))..tree.tokenStart(last)
-    ];
+    const text = tree.source[tree.tokenStart(tree.firstToken(type_node))..tree.tokenStart(last)];
     if (std.mem.findScalar(u8, text, '=') != null) {
         std.debug.print(
             "runtime/generate.zig: extern '{s}' is initialized; an exported object " ++

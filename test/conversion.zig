@@ -127,7 +127,6 @@ test "America/New_York switches to and from daylight saving time in 2026" {
     }
 }
 
-
 test "an autumn fold names two instants an hour apart, and both convert back" {
     try support.requireProvider();
     var arena = std.heap.ArenaAllocator.init(support.gpa);
